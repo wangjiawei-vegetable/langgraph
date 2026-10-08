@@ -441,6 +441,37 @@ def test_prune_keep_latest_preserves_parent_task_writes() -> None:
         assert checkpoint.checkpoint["channel_values"][TASKS] == ["pending-send"]
 
 
+@pytest.mark.parametrize("saver_name", ["base", "pool", "pipe"])
+def test_prune_keep_latest_can_continue(saver_name: str) -> None:
+    with _saver(saver_name) as saver:
+        configs = _put_prune_checkpoints(saver, "thread-1")
+
+        saver.prune(["thread-1"], strategy="keep_latest")
+
+        checkpoint = empty_checkpoint()
+        checkpoint["channel_values"] = {"value": {"index": 3}}
+        checkpoint["channel_versions"] = {"value": "3"}
+        continued = saver.put(
+            configs[-1],
+            checkpoint,
+            {"source": "loop", "step": 3},
+            checkpoint["channel_versions"],
+        )
+        saver.put_writes(continued, [("write", 3)], task_id="task-3")
+
+        loaded = saver.get_tuple(continued)
+        assert loaded is not None
+        assert loaded.parent_config == configs[-1]
+        assert loaded.checkpoint["channel_values"]["value"] == {"index": 3}
+        assert loaded.pending_writes == [("task-3", "write", 3)]
+        assert [
+            item.config
+            for item in saver.list(
+                {"configurable": {"thread_id": "thread-1", "checkpoint_ns": ""}}
+            )
+        ] == [continued, configs[-1]]
+
+
 def test_prune_delete() -> None:
     with _base_saver() as saver:
         _put_prune_checkpoints(saver, "thread-1")
